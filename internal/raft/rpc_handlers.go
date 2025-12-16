@@ -170,7 +170,6 @@ func (rn *RaftNode) HandleAppendEntries(ctx context.Context, req *raftpb.AppendE
 // Implements transport.SnapshotHandler interface.
 func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.InstallSnapshotRequest) (*raftpb.InstallSnapshotResponse, error) {
 	rn.mu.Lock()
-	defer rn.mu.Unlock()
 
 	resp := &raftpb.InstallSnapshotResponse{
 		Term: rn.currentTerm,
@@ -178,6 +177,7 @@ func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.Insta
 
 	// Reply immediately if term < currentTerm
 	if req.Term < rn.currentTerm {
+		rn.mu.Unlock()
 		return resp, nil
 	}
 
@@ -193,6 +193,7 @@ func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.Insta
 			zap.Int64("lastIncludedIndex", req.LastIncludedIndex),
 			zap.Int64("lastIncludedTerm", req.LastIncludedTerm),
 			zap.Error(err))
+		rn.mu.Unlock()
 		return resp, nil
 	}
 
@@ -203,6 +204,7 @@ func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.Insta
 			zap.Error(err))
 		// Log truncation failed, but snapshot is saved
 		// This is a partial failure state, but we can recover on restart
+		rn.mu.Unlock()
 		return resp, nil
 	}
 
@@ -210,24 +212,34 @@ func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.Insta
 	rn.leaderId = req.LeaderId
 	rn.resetElectionTimer()
 
-	// Send snapshot to state machine - must succeed before updating indices
-	// Use blocking send with context cancellation support
+	// Prepare snapshot message and indices before releasing lock
+	snapshotIndex := req.LastIncludedIndex
+	snapshotTerm := req.LastIncludedTerm
+	snapshotData := req.Data
+
+	// Release lock before blocking channel send to avoid deadlock
+	// If applyCh consumer needs rn.mu, holding it here would deadlock
+	rn.mu.Unlock()
+
+	// Send snapshot to state machine
 	msg := ApplyMsg{
 		SnapshotValid: true,
-		Snapshot:      req.Data,
-		SnapshotTerm:  req.LastIncludedTerm,
-		SnapshotIndex: req.LastIncludedIndex,
+		Snapshot:      snapshotData,
+		SnapshotTerm:  snapshotTerm,
+		SnapshotIndex: snapshotIndex,
 	}
 
 	select {
 	case rn.applyCh <- msg:
 		// Successfully sent to state machine, now update indices
-		if req.LastIncludedIndex > rn.commitIndex {
-			rn.commitIndex = req.LastIncludedIndex
+		rn.mu.Lock()
+		if snapshotIndex > rn.commitIndex {
+			rn.commitIndex = snapshotIndex
 		}
-		if req.LastIncludedIndex > rn.lastApplied {
-			rn.lastApplied = req.LastIncludedIndex
+		if snapshotIndex > rn.lastApplied {
+			rn.lastApplied = snapshotIndex
 		}
+		rn.mu.Unlock()
 	case <-ctx.Done():
 		// Context cancelled, don't update indices
 		return resp, ctx.Err()

@@ -277,6 +277,11 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		return err
 	}
 
+	// Create result channel before proposing to avoid race condition.
+	// If the entry is applied very quickly (e.g., single-node cluster),
+	// handleApplyMsg might look for the channel before we register it.
+	resultCh := make(chan OpResult, 1)
+
 	// Propose to Raft
 	index, _, err := kv.raft.Propose(data)
 	if err != nil {
@@ -291,9 +296,7 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		return err
 	}
 
-	// Create a channel to receive the result
-	resultCh := make(chan OpResult, 1)
-
+	// Register the result channel now that we have the index
 	kv.mu.Lock()
 	kv.pendingOps[index] = resultCh
 	kv.mu.Unlock()

@@ -24,7 +24,11 @@ func GetFreeAddr() string {
 }
 
 // GetFreeAddrs returns n free local addresses for testing.
-// See GetFreeAddr for TOCTOU warning - the race window compounds with more addresses.
+//
+// WARNING: In addition to the TOCTOU race from GetFreeAddr, there is a risk that
+// the same port may appear multiple times in the returned slice if a released port
+// is reassigned before the loop completes. For scenarios requiring guaranteed unique
+// addresses, use GetFreeListeners instead.
 func GetFreeAddrs(n int) []string {
 	if n < 0 {
 		panic("n must be non-negative")
@@ -55,6 +59,17 @@ func GetFreeListeners(n int) []net.Listener {
 		panic("n must be non-negative")
 	}
 	listeners := make([]net.Listener, n)
+	// Clean up any created listeners if we panic mid-loop (e.g., port exhaustion)
+	defer func() {
+		if r := recover(); r != nil {
+			for _, lis := range listeners {
+				if lis != nil {
+					lis.Close()
+				}
+			}
+			panic(r)
+		}
+	}()
 	for i := 0; i < n; i++ {
 		listeners[i] = GetFreeListener()
 	}

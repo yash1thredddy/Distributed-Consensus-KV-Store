@@ -185,7 +185,7 @@ snapshot_threshold: 10000
 Environment variables use the `RAFT_` prefix:
 - `RAFT_NODE_ID` - Node identifier
 - `RAFT_DATA_DIR` - Data storage directory
-- `RAFT_RAFT_ADDR` - Raft RPC address
+- `RAFT_ADDR` - Raft RPC address
 - `RAFT_HTTP_ADDR` - HTTP API address
 - `RAFT_PEERS` - Comma-separated peer addresses
 - `RAFT_ELECTION_TIMEOUT_MIN` - Minimum election timeout

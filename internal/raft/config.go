@@ -191,7 +191,8 @@ func WithLoggerOption(logger *zap.Logger) RaftOption {
 }
 
 // NewRaftConfig creates a new RaftConfig with the given ID and options.
-func NewRaftConfig(id string, opts ...RaftOption) *RaftConfig {
+// Returns an error if required fields are missing or invalid.
+func NewRaftConfig(id string, opts ...RaftOption) (*RaftConfig, error) {
 	cfg := &RaftConfig{
 		ID:                 id,
 		ElectionTimeoutMin: DefaultElectionTimeoutMin,
@@ -203,5 +204,33 @@ func NewRaftConfig(id string, opts ...RaftOption) *RaftConfig {
 		opt(cfg)
 	}
 
-	return cfg
+	// Validate required fields
+	if cfg.ID == "" {
+		return nil, errors.New("node ID is required")
+	}
+	if cfg.Storage == nil {
+		return nil, errors.New("storage is required")
+	}
+	if cfg.Transport == nil {
+		return nil, errors.New("transport is required")
+	}
+	if cfg.ApplyCh == nil {
+		return nil, errors.New("apply channel is required")
+	}
+
+	// Validate timing constraints
+	if cfg.ElectionTimeoutMin <= 0 {
+		return nil, errors.New("election timeout min must be positive")
+	}
+	if cfg.ElectionTimeoutMax <= cfg.ElectionTimeoutMin {
+		return nil, errors.New("election timeout max must be greater than min")
+	}
+	if cfg.HeartbeatInterval <= 0 {
+		return nil, errors.New("heartbeat interval must be positive")
+	}
+	if cfg.HeartbeatInterval >= cfg.ElectionTimeoutMin {
+		return nil, errors.New("heartbeat interval must be less than election timeout min")
+	}
+
+	return cfg, nil
 }

@@ -48,6 +48,8 @@ func (c *TestKVCluster) Start() error {
 			for _, startedKV := range c.kvServers {
 				startedKV.Stop()
 			}
+			// Also clean up the underlying Raft cluster
+			c.cluster.Cleanup()
 			return err
 		}
 		c.kvServers[node.ID] = kv
