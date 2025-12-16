@@ -6,9 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
-	"github.com/yourusername/distributed-kv/internal/storage"
-	"github.com/yourusername/distributed-kv/internal/transport"
+	"go.uber.org/zap"
+
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/transport"
 )
 
 // Errors
@@ -65,6 +67,7 @@ type RaftNode struct {
 	transport transport.Transport
 	storage   storage.Storage
 	applyCh   chan ApplyMsg // Sends committed entries to state machine
+	logger    *zap.Logger   // Structured logger
 
 	// Goroutine coordination
 	stopCh       chan struct{}   // Signals shutdown
@@ -90,6 +93,7 @@ type RaftConfig struct {
 	Storage            storage.Storage
 	Transport          transport.Transport
 	ApplyCh            chan ApplyMsg
+	Logger             *zap.Logger // Optional; defaults to no-op logger
 	ElectionTimeoutMin time.Duration
 	ElectionTimeoutMax time.Duration
 	HeartbeatInterval  time.Duration
@@ -122,6 +126,11 @@ func NewRaftNode(cfg *RaftConfig) (*RaftNode, error) {
 		return nil, errors.New("transport cannot be nil")
 	}
 
+	logger := cfg.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
 	rn := &RaftNode{
 		id:                 cfg.ID,
 		peers:              cfg.Peers,
@@ -129,6 +138,7 @@ func NewRaftNode(cfg *RaftConfig) (*RaftNode, error) {
 		storage:            cfg.Storage,
 		transport:          cfg.Transport,
 		applyCh:            cfg.ApplyCh,
+		logger:             logger.With(zap.String("nodeId", cfg.ID)),
 		electionTimeoutMin: cfg.ElectionTimeoutMin,
 		electionTimeoutMax: cfg.ElectionTimeoutMax,
 		heartbeatInterval:  cfg.HeartbeatInterval,

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/distributed-kv/internal/raft"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
 )
 
 // ClusterConfig holds configuration for creating a test cluster.

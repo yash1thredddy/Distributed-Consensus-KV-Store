@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"

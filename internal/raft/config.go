@@ -1,10 +1,13 @@
 package raft
 
 import (
+	"errors"
 	"time"
 
-	"github.com/yourusername/distributed-kv/internal/storage"
-	"github.com/yourusername/distributed-kv/internal/transport"
+	"go.uber.org/zap"
+
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/transport"
 )
 
 // --------------------------------------------------------------------------
@@ -31,13 +34,16 @@ func NewRaftConfigBuilder(id string) *RaftConfigBuilder {
 
 // WithPeers sets the peer IDs.
 func (b *RaftConfigBuilder) WithPeers(peers []string) *RaftConfigBuilder {
-	b.config.Peers = peers
+	b.config.Peers = append([]string(nil), peers...)
 	return b
 }
 
 // WithPeerAddrs sets the peer address mapping.
 func (b *RaftConfigBuilder) WithPeerAddrs(addrs map[string]string) *RaftConfigBuilder {
-	b.config.PeerAddrs = addrs
+	b.config.PeerAddrs = make(map[string]string, len(addrs))
+	for k, v := range addrs {
+		b.config.PeerAddrs[k] = v
+	}
 	return b
 }
 
@@ -72,9 +78,38 @@ func (b *RaftConfigBuilder) WithHeartbeatInterval(interval time.Duration) *RaftC
 	return b
 }
 
+// WithLogger sets the logger.
+func (b *RaftConfigBuilder) WithLogger(logger *zap.Logger) *RaftConfigBuilder {
+	b.config.Logger = logger
+	return b
+}
+
 // Build creates the RaftConfig, returning an error if required fields are missing.
 func (b *RaftConfigBuilder) Build() (*RaftConfig, error) {
-	// Validation handled in NewRaftNode
+	if b.config.ID == "" {
+		return nil, errors.New("node ID is required")
+	}
+	if b.config.Storage == nil {
+		return nil, errors.New("storage is required")
+	}
+	if b.config.Transport == nil {
+		return nil, errors.New("transport is required")
+	}
+	if b.config.ApplyCh == nil {
+		return nil, errors.New("apply channel is required")
+	}
+	if b.config.ElectionTimeoutMin <= 0 {
+		return nil, errors.New("election timeout min must be positive")
+	}
+	if b.config.ElectionTimeoutMax <= b.config.ElectionTimeoutMin {
+		return nil, errors.New("election timeout max must be greater than min")
+	}
+	if b.config.HeartbeatInterval <= 0 {
+		return nil, errors.New("heartbeat interval must be positive")
+	}
+	if b.config.HeartbeatInterval >= b.config.ElectionTimeoutMin {
+		return nil, errors.New("heartbeat interval must be less than election timeout min")
+	}
 	return b.config, nil
 }
 
@@ -98,14 +133,17 @@ type RaftOption func(*RaftConfig)
 // WithPeersOption returns an option that sets the peer IDs.
 func WithPeersOption(peers []string) RaftOption {
 	return func(cfg *RaftConfig) {
-		cfg.Peers = peers
+		cfg.Peers = append([]string(nil), peers...)
 	}
 }
 
 // WithPeerAddrsOption returns an option that sets peer addresses.
 func WithPeerAddrsOption(addrs map[string]string) RaftOption {
 	return func(cfg *RaftConfig) {
-		cfg.PeerAddrs = addrs
+		cfg.PeerAddrs = make(map[string]string, len(addrs))
+		for k, v := range addrs {
+			cfg.PeerAddrs[k] = v
+		}
 	}
 }
 
@@ -142,6 +180,13 @@ func WithElectionTimeoutOption(min, max time.Duration) RaftOption {
 func WithHeartbeatIntervalOption(interval time.Duration) RaftOption {
 	return func(cfg *RaftConfig) {
 		cfg.HeartbeatInterval = interval
+	}
+}
+
+// WithLoggerOption returns an option that sets the logger.
+func WithLoggerOption(logger *zap.Logger) RaftOption {
+	return func(cfg *RaftConfig) {
+		cfg.Logger = logger
 	}
 }
 

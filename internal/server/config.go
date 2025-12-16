@@ -3,8 +3,8 @@ package server
 import (
 	"time"
 
-	"github.com/yourusername/distributed-kv/internal/raft"
-	"github.com/yourusername/distributed-kv/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 )
 
 // --------------------------------------------------------------------------
@@ -45,8 +45,12 @@ func (b *KVServerConfigBuilder) WithOperationTimeout(timeout time.Duration) *KVS
 }
 
 // Build creates the KVServerConfig.
+// Returns a copy of the configuration to prevent shared state issues.
+// The builder can be reused after calling Build.
 func (b *KVServerConfigBuilder) Build() *KVServerConfig {
-	return b.config
+	// Return a copy to prevent shared state between builder and returned config
+	cfg := *b.config
+	return &cfg
 }
 
 // --------------------------------------------------------------------------

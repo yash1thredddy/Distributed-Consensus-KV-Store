@@ -3,7 +3,7 @@ package raft
 import (
 	"sync"
 
-	"github.com/yourusername/distributed-kv/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 )
 
 // Log manages Raft log entries with persistence.

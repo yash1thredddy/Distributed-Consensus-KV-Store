@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package raftpb;
 
-option go_package = "github.com/yourusername/distributed-kv/api/proto/raftpb";
+option go_package = "github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb";
 
 // LogEntry represents a single entry in the Raft log
 message LogEntry {

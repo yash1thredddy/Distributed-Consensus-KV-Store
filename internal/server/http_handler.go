@@ -1,14 +1,19 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
-	"github.com/yourusername/distributed-kv/internal/raft"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
 )
+
+// MaxRequestBodySize is the maximum size of request bodies (1MB).
+const MaxRequestBodySize = 1 << 20 // 1MB
 
 // HTTPHandler provides REST API handlers for the KV server.
 type HTTPHandler struct {
@@ -41,9 +46,10 @@ type ErrorResponse struct {
 
 // GetResponse represents a GET response.
 type GetResponse struct {
-	Key   string `json:"key"`
-	Value string `json:"value,omitempty"`
-	Found bool   `json:"found"`
+	Key      string `json:"key"`
+	Value    string `json:"value,omitempty"`
+	Found    bool   `json:"found"`
+	Encoding string `json:"encoding,omitempty"` // "base64" if value is binary, empty for UTF-8 text
 }
 
 // PutResponse represents a PUT response.
@@ -117,7 +123,13 @@ func (h *HTTPHandler) handleGet(w http.ResponseWriter, r *http.Request, key stri
 		Found: found,
 	}
 	if found {
-		resp.Value = string(value)
+		// Use base64 encoding for binary data, plain string for valid UTF-8
+		if utf8.Valid(value) {
+			resp.Value = string(value)
+		} else {
+			resp.Value = base64.StdEncoding.EncodeToString(value)
+			resp.Encoding = "base64"
+		}
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
@@ -125,13 +137,20 @@ func (h *HTTPHandler) handleGet(w http.ResponseWriter, r *http.Request, key stri
 
 // handlePut handles PUT /kv/{key}.
 func (h *HTTPHandler) handlePut(w http.ResponseWriter, r *http.Request, key string) {
-	// Read body
+	// Limit body size to prevent DoS attacks
+	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		// Check if it's a size limit error
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			h.writeError(w, http.StatusRequestEntityTooLarge, "request body too large", "")
+			return
+		}
 		h.writeError(w, http.StatusBadRequest, "failed to read body", "")
 		return
 	}
-	defer r.Body.Close()
 
 	err = h.kv.Put(r.Context(), key, body)
 	if err != nil {

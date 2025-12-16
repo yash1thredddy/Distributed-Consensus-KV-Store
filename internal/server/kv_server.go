@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yourusername/distributed-kv/internal/raft"
-	"github.com/yourusername/distributed-kv/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 )
 
 // Errors
@@ -53,7 +53,18 @@ type KVServerConfig struct {
 }
 
 // NewKVServer creates a new KV server.
+// Panics if cfg, cfg.Raft, or cfg.Storage is nil.
 func NewKVServer(cfg *KVServerConfig) *KVServer {
+	if cfg == nil {
+		panic("kv server config is nil")
+	}
+	if cfg.Raft == nil {
+		panic("raft node is nil")
+	}
+	if cfg.Storage == nil {
+		panic("storage is nil")
+	}
+
 	timeout := cfg.OperationTimeout
 	if timeout == 0 {
 		timeout = DefaultOperationTimeout
@@ -182,11 +193,24 @@ func (kv *KVServer) applySnapshot(data []byte) {
 
 // Get retrieves a value by key.
 // If linearizable is true, ensures the read reflects all committed writes.
+//
+// IMPORTANT: The current linearizable read implementation provides "lease-less"
+// consistency by checking leader status and waiting for applies to catch up.
+// This provides strong consistency under normal operation but has a theoretical
+// race window: the leader could lose leadership after the IsLeader check but
+// before the read completes. For truly linearizable reads, consider:
+//   - Read Index: Confirm leadership via heartbeat quorum before reading
+//   - Lease-based: Use time-bound leader leases
+//   - Log-based: Route reads through Raft log (expensive)
+//
+// The current implementation is suitable for most use cases where the brief
+// race window is acceptable.
 func (kv *KVServer) Get(ctx context.Context, key string, linearizable bool) ([]byte, bool, error) {
 	if linearizable {
 		// For linearizable reads, we need to ensure we're reading from a leader
 		// that has committed all previous entries.
-		// Simple approach: route through Raft to ensure we're current
+		// Note: This is a best-effort implementation. See function documentation
+		// for limitations regarding the theoretical race window.
 		if !kv.raft.IsLeader() {
 			return nil, false, kv.notLeaderError()
 		}

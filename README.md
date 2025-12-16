@@ -75,6 +75,7 @@ The system implements the Raft protocol which ensures:
 ```
 distributed-kv/
 ├── cmd/server/              # Application entry point
+├── configs/                 # Node configuration files
 ├── internal/
 │   ├── raft/               # Raft consensus implementation
 │   │   ├── raft.go         # Core RaftNode logic
@@ -171,19 +172,26 @@ Configuration can be provided via YAML file or environment variables:
 node_id: "node1"
 data_dir: "./data/node1"
 raft_addr: ":5001"
-http_addr: ":8081"
+http_addr: ":8080"
 peers:
   - "node2:5002"
   - "node3:5003"
 election_timeout_min: 150ms
 election_timeout_max: 300ms
 heartbeat_interval: 50ms
+snapshot_threshold: 10000
 ```
 
 Environment variables use the `RAFT_` prefix:
-- `RAFT_NODE_ID`
-- `RAFT_DATA_DIR`
-- `RAFT_RAFT_ADDR`
+- `RAFT_NODE_ID` - Node identifier
+- `RAFT_DATA_DIR` - Data storage directory
+- `RAFT_RAFT_ADDR` - Raft RPC address
+- `RAFT_HTTP_ADDR` - HTTP API address
+- `RAFT_PEERS` - Comma-separated peer addresses
+- `RAFT_ELECTION_TIMEOUT_MIN` - Minimum election timeout
+- `RAFT_ELECTION_TIMEOUT_MAX` - Maximum election timeout
+- `RAFT_HEARTBEAT_INTERVAL` - Heartbeat interval
+- `RAFT_SNAPSHOT_THRESHOLD` - Log entries before snapshot
 
 ## Testing
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/yourusername/distributed-kv/pkg/config"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/pkg/config"
 )
 
 func main() {

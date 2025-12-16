@@ -2,14 +2,16 @@ package server_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourusername/distributed-kv/internal/server"
-	"github.com/yourusername/distributed-kv/pkg/testutil"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/server"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/pkg/testutil"
 )
 
 // TestKVCluster wraps a test cluster with KV servers.
@@ -42,6 +44,10 @@ func (c *TestKVCluster) Start() error {
 		}
 		kv := server.NewKVServer(cfg)
 		if err := kv.Start(); err != nil {
+			// Clean up any KV servers started before the error
+			for _, startedKV := range c.kvServers {
+				startedKV.Stop()
+			}
 			return err
 		}
 		c.kvServers[node.ID] = kv
@@ -219,10 +225,25 @@ func TestKVServer_LeaderRedirect(t *testing.T) {
 	require.NotNil(t, leader)
 
 	// Wait for heartbeats to propagate so followers know about the leader
-	time.Sleep(200 * time.Millisecond)
+	// Use a retry loop instead of fixed sleep for reliability on slow CI systems
+	var follower *server.KVServer
+	require.Eventually(t, func() bool {
+		follower = cluster.GetFollowerKV()
+		if follower == nil {
+			return false
+		}
+		// Check if follower knows about the leader by attempting an operation
+		err := follower.Put(context.Background(), "test-key", []byte("test"))
+		if err == nil {
+			return false // Follower thinks it's the leader, not ready yet
+		}
+		var notLeaderErr *server.ErrNotLeaderWithHint
+		if errors.As(err, &notLeaderErr) {
+			return notLeaderErr.LeaderID != "" // Follower knows who the leader is
+		}
+		return false
+	}, 2*time.Second, 50*time.Millisecond, "follower should become aware of leader")
 
-	// Get a follower
-	follower := cluster.GetFollowerKV()
 	require.NotNil(t, follower)
 
 	ctx := context.Background()
@@ -255,9 +276,11 @@ func TestKVServer_ConcurrentOperations(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			key := "key" + string(rune('0'+i%10))
-			value := []byte("value" + string(rune('0'+i)))
-			leader.Put(ctx, key, value)
+			key := fmt.Sprintf("key%d", i)
+			value := []byte(fmt.Sprintf("value%d", i))
+			if err := leader.Put(ctx, key, value); err != nil {
+				t.Logf("Put failed for key %s: %v", key, err)
+			}
 		}(i)
 	}
 

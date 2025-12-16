@@ -3,7 +3,9 @@ package raft
 import (
 	"context"
 
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
+	"go.uber.org/zap"
+
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
 )
 
 // --------------------------------------------------------------------------
@@ -42,11 +44,18 @@ func (rn *RaftNode) HandleRequestVote(ctx context.Context, req *raftpb.RequestVo
 	logUpToDate := rn.isLogUpToDate(req.LastLogIndex, req.LastLogTerm)
 
 	if canVote && logUpToDate {
+		// CRITICAL: Persist before responding
+		// Save old value in case persistence fails
+		oldVotedFor := rn.votedFor
 		rn.votedFor = req.CandidateId
 
-		// CRITICAL: Persist before responding
 		if err := rn.persistState(); err != nil {
-			// Can't persist, don't grant vote
+			rn.logger.Error("failed to persist vote",
+				zap.String("candidateId", req.CandidateId),
+				zap.Int64("term", req.Term),
+				zap.Error(err))
+			// Can't persist, restore old state and don't grant vote
+			rn.votedFor = oldVotedFor
 			return resp, nil
 		}
 
@@ -121,6 +130,9 @@ func (rn *RaftNode) HandleAppendEntries(ctx context.Context, req *raftpb.AppendE
 			if existing != nil && existing.Term != entry.Term {
 				// Conflict - truncate from here
 				if err := rn.log.TruncateAfter(entry.Index - 1); err != nil {
+					rn.logger.Error("failed to truncate log",
+						zap.Int64("index", entry.Index-1),
+						zap.Error(err))
 					return resp, nil
 				}
 			}
@@ -128,6 +140,10 @@ func (rn *RaftNode) HandleAppendEntries(ctx context.Context, req *raftpb.AppendE
 			if existing == nil || existing.Term != entry.Term {
 				// Append new entry
 				if err := rn.log.Append(entry); err != nil {
+					rn.logger.Error("failed to append log entry",
+						zap.Int64("index", entry.Index),
+						zap.Int64("term", entry.Term),
+						zap.Error(err))
 					return resp, nil
 				}
 			}
@@ -171,37 +187,50 @@ func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.Insta
 		resp.Term = rn.currentTerm
 	}
 
-	rn.leaderId = req.LeaderId
-	rn.resetElectionTimer()
-
-	// Save snapshot
+	// Save snapshot first - don't update any state until storage succeeds
 	if err := rn.storage.SaveSnapshot(req.LastIncludedIndex, req.LastIncludedTerm, req.Data); err != nil {
+		rn.logger.Error("failed to save snapshot",
+			zap.Int64("lastIncludedIndex", req.LastIncludedIndex),
+			zap.Int64("lastIncludedTerm", req.LastIncludedTerm),
+			zap.Error(err))
 		return resp, nil
 	}
 
 	// Truncate log up to snapshot point
 	if err := rn.storage.TruncateLogBefore(req.LastIncludedIndex + 1); err != nil {
+		rn.logger.Error("failed to truncate log before snapshot",
+			zap.Int64("index", req.LastIncludedIndex+1),
+			zap.Error(err))
+		// Log truncation failed, but snapshot is saved
+		// This is a partial failure state, but we can recover on restart
 		return resp, nil
 	}
 
-	// Update state
-	if req.LastIncludedIndex > rn.commitIndex {
-		rn.commitIndex = req.LastIncludedIndex
-	}
-	if req.LastIncludedIndex > rn.lastApplied {
-		rn.lastApplied = req.LastIncludedIndex
-	}
+	// Storage operations succeeded, now update leader info
+	rn.leaderId = req.LeaderId
+	rn.resetElectionTimer()
 
-	// Send snapshot to state machine
-	select {
-	case rn.applyCh <- ApplyMsg{
+	// Send snapshot to state machine - must succeed before updating indices
+	// Use blocking send with context cancellation support
+	msg := ApplyMsg{
 		SnapshotValid: true,
 		Snapshot:      req.Data,
 		SnapshotTerm:  req.LastIncludedTerm,
 		SnapshotIndex: req.LastIncludedIndex,
-	}:
-	default:
-		// Channel full, skip
+	}
+
+	select {
+	case rn.applyCh <- msg:
+		// Successfully sent to state machine, now update indices
+		if req.LastIncludedIndex > rn.commitIndex {
+			rn.commitIndex = req.LastIncludedIndex
+		}
+		if req.LastIncludedIndex > rn.lastApplied {
+			rn.lastApplied = req.LastIncludedIndex
+		}
+	case <-ctx.Done():
+		// Context cancelled, don't update indices
+		return resp, ctx.Err()
 	}
 
 	return resp, nil

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourusername/distributed-kv/internal/raft"
-	"github.com/yourusername/distributed-kv/pkg/testutil"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/pkg/testutil"
 )
 
 func TestRaftNode_InitialState(t *testing.T) {

@@ -3,9 +3,9 @@ package testutil
 import (
 	"time"
 
-	"github.com/yourusername/distributed-kv/internal/raft"
-	"github.com/yourusername/distributed-kv/internal/storage"
-	"github.com/yourusername/distributed-kv/internal/transport"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/transport"
 )
 
 // TestNode wraps a RaftNode with its infrastructure for testing.
@@ -44,7 +44,8 @@ func DefaultTestNodeConfig() TestNodeConfig {
 func NewTestNode(cfg TestNodeConfig) (*TestNode, error) {
 	// Use provided storage or create new in-memory storage
 	store := cfg.Storage
-	if store == nil {
+	storageOwned := store == nil
+	if storageOwned {
 		store = storage.NewMemoryStorage()
 	}
 
@@ -87,6 +88,11 @@ func NewTestNode(cfg TestNodeConfig) (*TestNode, error) {
 
 	node, err := raft.NewRaftNode(raftCfg)
 	if err != nil {
+		// Clean up transport on RaftNode creation failure
+		trans.Stop()
+		if storageOwned {
+			store.Close()
+		}
 		return nil, err
 	}
 
@@ -105,7 +111,12 @@ func (n *TestNode) Start() error {
 	if err := n.Transport.Start(); err != nil {
 		return err
 	}
-	return n.Node.Start()
+	if err := n.Node.Start(); err != nil {
+		// Clean up transport if node start fails
+		n.Transport.Stop()
+		return err
+	}
+	return nil
 }
 
 // Stop stops the test node.

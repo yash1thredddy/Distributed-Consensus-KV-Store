@@ -6,8 +6,8 @@ all: proto build test
 # Generate protobuf code
 proto:
 	@echo "Generating protobuf code..."
-	protoc --go_out=. --go_opt=module=github.com/yourusername/distributed-kv --go-grpc_out=. --go-grpc_opt=module=github.com/yourusername/distributed-kv api/proto/raft.proto
-	protoc --go_out=. --go_opt=module=github.com/yourusername/distributed-kv --go-grpc_out=. --go-grpc_opt=module=github.com/yourusername/distributed-kv api/proto/kv.proto
+	protoc --go_out=. --go_opt=module=github.com/yash1thredddy/Distributed-Consensus-KV-Store --go-grpc_out=. --go-grpc_opt=module=github.com/yash1thredddy/Distributed-Consensus-KV-Store api/proto/raft.proto
+	protoc --go_out=. --go_opt=module=github.com/yash1thredddy/Distributed-Consensus-KV-Store --go-grpc_out=. --go-grpc_opt=module=github.com/yash1thredddy/Distributed-Consensus-KV-Store api/proto/kv.proto
 	@echo "Protobuf code generation complete!"
 
 # Build the server binary

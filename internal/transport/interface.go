@@ -3,7 +3,7 @@ package transport
 import (
 	"context"
 
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
 )
 
 // --------------------------------------------------------------------------
