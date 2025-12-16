@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
 )
 
 // mockRaftHandler implements RaftHandler for testing.

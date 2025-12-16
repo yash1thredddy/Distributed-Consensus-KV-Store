@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
 )
 
 // electionTimer runs the election timeout loop.

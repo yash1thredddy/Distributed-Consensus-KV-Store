@@ -3,7 +3,7 @@ package raft
 import (
 	"sync"
 
-	"github.com/yourusername/distributed-kv/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 )
 
 // Log manages Raft log entries with persistence.
@@ -11,8 +11,8 @@ import (
 // Index 0 is a virtual sentinel entry (never stored).
 type Log struct {
 	mu        sync.RWMutex
-	storage   storage.Storage
-	lastIndex int64 // Index of last entry (0 if empty)
+	storage   storage.LogStorage // Uses segregated interface (ISP)
+	lastIndex int64              // Index of last entry (0 if empty)
 
 	// Cache for recent entries (optional optimization)
 	cache       map[int64]*LogEntry
@@ -21,7 +21,8 @@ type Log struct {
 }
 
 // NewLog creates a new Log backed by the given storage.
-func NewLog(s storage.Storage) *Log {
+// Accepts LogStorage interface (ISP) - any storage implementing log operations.
+func NewLog(s storage.LogStorage) *Log {
 	l := &Log{
 		storage:   s,
 		cache:     make(map[int64]*LogEntry),
@@ -227,6 +228,27 @@ func (l *Log) TruncateAfter(index int64) error {
 	// Clear cache entries after index
 	for idx := range l.cache {
 		if idx > index {
+			delete(l.cache, idx)
+		}
+	}
+
+	return nil
+}
+
+// TruncateBefore removes all entries before the given index (for snapshots).
+// After truncation, entries before index are no longer accessible.
+func (l *Log) TruncateBefore(index int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Truncate in storage
+	if err := l.storage.TruncateLogBefore(index); err != nil {
+		return err
+	}
+
+	// Clear cache entries before index
+	for idx := range l.cache {
+		if idx < index {
 			delete(l.cache, idx)
 		}
 	}

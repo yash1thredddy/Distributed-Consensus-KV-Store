@@ -2,14 +2,29 @@ package testutil
 
 import (
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
-	"github.com/yourusername/distributed-kv/internal/raft"
-	"github.com/yourusername/distributed-kv/internal/storage"
-	"github.com/yourusername/distributed-kv/internal/transport"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
 )
+
+// ClusterConfig holds configuration for creating a test cluster.
+type ClusterConfig struct {
+	NumNodes           int
+	ElectionTimeoutMin time.Duration
+	ElectionTimeoutMax time.Duration
+	HeartbeatInterval  time.Duration
+}
+
+// DefaultClusterConfig returns default cluster configuration.
+func DefaultClusterConfig(numNodes int) ClusterConfig {
+	return ClusterConfig{
+		NumNodes:           numNodes,
+		ElectionTimeoutMin: 150 * time.Millisecond,
+		ElectionTimeoutMax: 300 * time.Millisecond,
+		HeartbeatInterval:  50 * time.Millisecond,
+	}
+}
 
 // TestCluster manages a cluster of RaftNodes for testing.
 type TestCluster struct {
@@ -17,51 +32,58 @@ type TestCluster struct {
 	nodes        map[string]*TestNode
 	nodeOrder    []string          // Order of nodes for deterministic iteration
 	stoppedNodes map[string]bool   // Tracks which nodes have been stopped
-	started      bool
-}
-
-// TestNode wraps a RaftNode with its infrastructure for testing.
-type TestNode struct {
-	ID        string
-	Node      *raft.RaftNode
-	Storage   storage.Storage
-	Transport *transport.GRPCTransport
-	Addr      string
-	ApplyCh   chan raft.ApplyMsg
+	started      bool              // Whether the cluster is currently running
+	initialized  bool              // Whether the cluster has been started at least once
+	config       ClusterConfig
 }
 
 // NewTestCluster creates a new test cluster with n nodes.
 func NewTestCluster(n int) *TestCluster {
+	return NewTestClusterWithConfig(DefaultClusterConfig(n))
+}
+
+// NewTestClusterWithConfig creates a new test cluster with custom configuration.
+func NewTestClusterWithConfig(cfg ClusterConfig) *TestCluster {
 	cluster := &TestCluster{
 		nodes:        make(map[string]*TestNode),
-		nodeOrder:    make([]string, 0, n),
+		nodeOrder:    make([]string, 0, cfg.NumNodes),
 		stoppedNodes: make(map[string]bool),
+		config:       cfg,
 	}
 
 	// Generate node IDs and addresses
-	nodeIDs := make([]string, n)
+	nodeIDs := make([]string, cfg.NumNodes)
 	nodeAddrs := make(map[string]string)
 
-	for i := 0; i < n; i++ {
+	for i := 0; i < cfg.NumNodes; i++ {
 		nodeIDs[i] = fmt.Sprintf("node%d", i+1)
-		addr := getFreeAddr()
-		nodeAddrs[nodeIDs[i]] = addr
+		nodeAddrs[nodeIDs[i]] = GetFreeAddr()
 	}
 
 	// Create nodes
-	for i := 0; i < n; i++ {
+	for i := 0; i < cfg.NumNodes; i++ {
 		nodeID := nodeIDs[i]
 		addr := nodeAddrs[nodeID]
 
 		// Get peers (all nodes except self)
-		peers := make([]string, 0, n-1)
+		peers := make([]string, 0, cfg.NumNodes-1)
 		for _, id := range nodeIDs {
 			if id != nodeID {
 				peers = append(peers, id)
 			}
 		}
 
-		node, err := createTestNode(nodeID, addr, peers, nodeAddrs)
+		nodeCfg := TestNodeConfig{
+			ID:                 nodeID,
+			Addr:               addr,
+			Peers:              peers,
+			PeerAddrs:          nodeAddrs,
+			ElectionTimeoutMin: cfg.ElectionTimeoutMin,
+			ElectionTimeoutMax: cfg.ElectionTimeoutMax,
+			HeartbeatInterval:  cfg.HeartbeatInterval,
+		}
+
+		node, err := NewTestNode(nodeCfg)
 		if err != nil {
 			panic(fmt.Sprintf("failed to create node %s: %v", nodeID, err))
 		}
@@ -73,57 +95,6 @@ func NewTestCluster(n int) *TestCluster {
 	return cluster
 }
 
-// createTestNode creates a single test node.
-func createTestNode(id, addr string, peers []string, peerAddrs map[string]string) (*TestNode, error) {
-	// Create in-memory storage
-	store := storage.NewMemoryStorage()
-
-	// Create transport
-	transportCfg := transport.DefaultGRPCTransportConfig(addr)
-	trans := transport.NewGRPCTransport(transportCfg)
-
-	// Create apply channel
-	applyCh := make(chan raft.ApplyMsg, 100)
-
-	// Create RaftNode
-	cfg := &raft.RaftConfig{
-		ID:                 id,
-		Peers:              peers,
-		PeerAddrs:          peerAddrs,
-		Storage:            store,
-		Transport:          trans,
-		ApplyCh:            applyCh,
-		ElectionTimeoutMin: 150 * time.Millisecond,
-		ElectionTimeoutMax: 300 * time.Millisecond,
-		HeartbeatInterval:  50 * time.Millisecond,
-	}
-
-	node, err := raft.NewRaftNode(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &TestNode{
-		ID:        id,
-		Node:      node,
-		Storage:   store,
-		Transport: trans,
-		Addr:      addr,
-		ApplyCh:   applyCh,
-	}, nil
-}
-
-// getFreeAddr returns a free local address for testing.
-func getFreeAddr() string {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		panic(err)
-	}
-	addr := lis.Addr().String()
-	lis.Close()
-	return addr
-}
-
 // Start starts all nodes in the cluster.
 func (c *TestCluster) Start() error {
 	c.mu.Lock()
@@ -133,53 +104,11 @@ func (c *TestCluster) Start() error {
 		return nil
 	}
 
-	// Check if this is a restart (nodes already exist but were stopped)
-	// We need to recreate RaftNodes since channels cannot be reopened
-	for _, id := range c.nodeOrder {
-		oldNode := c.nodes[id]
-
-		// Check if we need to recreate the node (transport was stopped)
-		// We'll recreate both transport and raft node to ensure clean state
-
-		// Get peers
-		peers := make([]string, 0, len(c.nodes)-1)
-		peerAddrs := make(map[string]string)
-		for nodeID, node := range c.nodes {
-			peerAddrs[nodeID] = node.Addr
-			if nodeID != id {
-				peers = append(peers, nodeID)
-			}
-		}
-
-		// Create new transport with same address
-		transportCfg := transport.DefaultGRPCTransportConfig(oldNode.Addr)
-		trans := transport.NewGRPCTransport(transportCfg)
-
-		// Create new RaftNode with same storage (for persistence) and same apply channel
-		cfg := &raft.RaftConfig{
-			ID:                 id,
-			Peers:              peers,
-			PeerAddrs:          peerAddrs,
-			Storage:            oldNode.Storage,
-			Transport:          trans,
-			ApplyCh:            oldNode.ApplyCh,
-			ElectionTimeoutMin: 150 * time.Millisecond,
-			ElectionTimeoutMax: 300 * time.Millisecond,
-			HeartbeatInterval:  50 * time.Millisecond,
-		}
-
-		node, err := raft.NewRaftNode(cfg)
-		if err != nil {
-			return fmt.Errorf("failed to create raft node %s: %w", id, err)
-		}
-
-		c.nodes[id] = &TestNode{
-			ID:        id,
-			Node:      node,
-			Storage:   oldNode.Storage,
-			Transport: trans,
-			Addr:      oldNode.Addr,
-			ApplyCh:   oldNode.ApplyCh,
+	// Only recreate nodes on restart (not on first start).
+	// Channels cannot be reopened, so we need fresh nodes for restarts.
+	if c.initialized {
+		if err := c.recreateNodes(); err != nil {
+			return err
 		}
 	}
 
@@ -200,10 +129,47 @@ func (c *TestCluster) Start() error {
 		}
 	}
 
-	// Clear all stopped node flags since all nodes are now running
+	// Clear all stopped node flags
 	c.stoppedNodes = make(map[string]bool)
-
 	c.started = true
+	c.initialized = true
+	return nil
+}
+
+// recreateNodes recreates RaftNode instances (needed for restart).
+func (c *TestCluster) recreateNodes() error {
+	for _, id := range c.nodeOrder {
+		oldNode := c.nodes[id]
+
+		// Build peer list
+		peers := make([]string, 0, len(c.nodes)-1)
+		peerAddrs := make(map[string]string)
+		for nodeID, node := range c.nodes {
+			peerAddrs[nodeID] = node.Addr
+			if nodeID != id {
+				peers = append(peers, nodeID)
+			}
+		}
+
+		nodeCfg := TestNodeConfig{
+			ID:                 id,
+			Addr:               oldNode.Addr,
+			Peers:              peers,
+			PeerAddrs:          peerAddrs,
+			Storage:            oldNode.Storage, // Preserve storage for persistence
+			ApplyCh:            oldNode.ApplyCh, // Preserve apply channel
+			ElectionTimeoutMin: c.config.ElectionTimeoutMin,
+			ElectionTimeoutMax: c.config.ElectionTimeoutMax,
+			HeartbeatInterval:  c.config.HeartbeatInterval,
+		}
+
+		node, err := NewTestNode(nodeCfg)
+		if err != nil {
+			return fmt.Errorf("failed to create raft node %s: %w", id, err)
+		}
+
+		c.nodes[id] = node
+	}
 	return nil
 }
 
@@ -218,32 +184,21 @@ func (c *TestCluster) Stop() error {
 		return nil
 	}
 
-	// Stop Raft nodes first
 	for _, node := range c.nodes {
-		node.Node.Stop()
+		node.Stop()
 	}
-
-	// Stop transports
-	for _, node := range c.nodes {
-		node.Transport.Stop()
-	}
-
-	// Note: We don't close storage here to allow restart with persistence
-	// Use Cleanup() when done with the cluster entirely
 
 	c.started = false
 	return nil
 }
 
 // Cleanup fully cleans up all cluster resources including storage.
-// Call this instead of Stop() when you're completely done with the cluster.
 func (c *TestCluster) Cleanup() error {
 	c.Stop()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Close storages
 	for _, node := range c.nodes {
 		node.Storage.Close()
 	}
@@ -252,18 +207,15 @@ func (c *TestCluster) Cleanup() error {
 }
 
 // Leader returns the current leader, or nil if no leader.
-// Excludes stopped nodes from consideration.
 func (c *TestCluster) Leader() *TestNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	for _, id := range c.nodeOrder {
-		// Skip stopped nodes
 		if c.stoppedNodes[id] {
 			continue
 		}
-		node := c.nodes[id]
-		if node.Node.State() == raft.Leader {
+		if node := c.nodes[id]; node.IsLeader() {
 			return node
 		}
 	}
@@ -272,14 +224,12 @@ func (c *TestCluster) Leader() *TestNode {
 
 // WaitForLeader waits for a leader to be elected within the timeout.
 func (c *TestCluster) WaitForLeader(timeout time.Duration) *TestNode {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if leader := c.Leader(); leader != nil {
-			return leader
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return nil
+	var leader *TestNode
+	WaitForCondition(func() bool {
+		leader = c.Leader()
+		return leader != nil
+	}, timeout)
+	return leader
 }
 
 // GetNode returns the node with the given ID.
@@ -301,15 +251,18 @@ func (c *TestCluster) Nodes() []*TestNode {
 	return nodes
 }
 
-// Followers returns all follower nodes.
+// Followers returns all follower nodes (excludes stopped nodes).
 func (c *TestCluster) Followers() []*TestNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	followers := make([]*TestNode, 0)
 	for _, id := range c.nodeOrder {
-		node := c.nodes[id]
-		if node.Node.State() == raft.Follower {
+		// Skip stopped nodes for consistency with Leader()
+		if c.stoppedNodes[id] {
+			continue
+		}
+		if node := c.nodes[id]; node.IsFollower() {
 			followers = append(followers, node)
 		}
 	}
@@ -326,8 +279,7 @@ func (c *TestCluster) StopNode(id string) error {
 		return fmt.Errorf("node %s not found", id)
 	}
 
-	node.Node.Stop()
-	node.Transport.Stop()
+	node.Stop()
 	c.stoppedNodes[id] = true
 	return nil
 }
@@ -342,7 +294,7 @@ func (c *TestCluster) RestartNode(id string) error {
 		return fmt.Errorf("node %s not found", id)
 	}
 
-	// Get peers
+	// Build peer list
 	peers := make([]string, 0, len(c.nodes)-1)
 	peerAddrs := make(map[string]string)
 	for nodeID, node := range c.nodes {
@@ -352,90 +304,44 @@ func (c *TestCluster) RestartNode(id string) error {
 		}
 	}
 
-	// Create new transport with same address
-	transportCfg := transport.DefaultGRPCTransportConfig(oldNode.Addr)
-	trans := transport.NewGRPCTransport(transportCfg)
-
-	// Create new RaftNode with same storage (for persistence)
-	cfg := &raft.RaftConfig{
+	nodeCfg := TestNodeConfig{
 		ID:                 id,
+		Addr:               oldNode.Addr,
 		Peers:              peers,
 		PeerAddrs:          peerAddrs,
 		Storage:            oldNode.Storage,
-		Transport:          trans,
 		ApplyCh:            oldNode.ApplyCh,
-		ElectionTimeoutMin: 150 * time.Millisecond,
-		ElectionTimeoutMax: 300 * time.Millisecond,
-		HeartbeatInterval:  50 * time.Millisecond,
+		ElectionTimeoutMin: c.config.ElectionTimeoutMin,
+		ElectionTimeoutMax: c.config.ElectionTimeoutMax,
+		HeartbeatInterval:  c.config.HeartbeatInterval,
 	}
 
-	node, err := raft.NewRaftNode(cfg)
+	node, err := NewTestNode(nodeCfg)
 	if err != nil {
 		return err
 	}
 
-	// Start transport
-	if err := trans.Start(); err != nil {
-		return err
-	}
-
-	time.Sleep(20 * time.Millisecond)
-
-	// Start node
 	if err := node.Start(); err != nil {
 		return err
 	}
 
-	c.nodes[id] = &TestNode{
-		ID:        id,
-		Node:      node,
-		Storage:   oldNode.Storage,
-		Transport: trans,
-		Addr:      oldNode.Addr,
-		ApplyCh:   oldNode.ApplyCh,
-	}
-
-	// Clear the stopped flag
+	c.nodes[id] = node
 	delete(c.stoppedNodes, id)
-
 	return nil
 }
 
-// WaitForApply waits for an entry with the given index to be applied on the node.
-func WaitForApply(applyCh <-chan raft.ApplyMsg, index int64, timeout time.Duration) (raft.ApplyMsg, bool) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case msg := <-applyCh:
-			if msg.CommandIndex == index {
-				return msg, true
-			}
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	return raft.ApplyMsg{}, false
-}
-
-// WaitForCondition waits for a condition to be true within timeout.
-func WaitForCondition(fn func() bool, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if fn() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
-}
-
-// AllNodesHaveEntry returns true if all nodes have the given entry.
+// AllNodesHaveEntry returns true if all running nodes have committed the given entry.
+// Stopped nodes are excluded to prevent WaitForCommit from hanging.
 func (c *TestCluster) AllNodesHaveEntry(index int64) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	for _, id := range c.nodeOrder {
-		node := c.nodes[id]
-		if node.Node.CommitIndex() < index {
+		// Skip stopped nodes - they won't have current commit index
+		if c.stoppedNodes[id] {
+			continue
+		}
+		if c.nodes[id].CommitIndex() < index {
 			return false
 		}
 	}
@@ -445,13 +351,43 @@ func (c *TestCluster) AllNodesHaveEntry(index int64) bool {
 // DrainApplyChannels drains all apply channels without blocking.
 func (c *TestCluster) DrainApplyChannels() {
 	for _, node := range c.Nodes() {
-		for {
-			select {
-			case <-node.ApplyCh:
-			default:
-				goto next
-			}
-		}
-	next:
+		DrainChannel(node.ApplyCh)
 	}
+}
+
+// WaitForCommit waits for all nodes to commit the given index.
+func (c *TestCluster) WaitForCommit(index int64, timeout time.Duration) bool {
+	return WaitForCondition(func() bool {
+		return c.AllNodesHaveEntry(index)
+	}, timeout)
+}
+
+// NodeCount returns the number of nodes in the cluster.
+func (c *TestCluster) NodeCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.nodes)
+}
+
+// RunningNodeCount returns the number of running (non-stopped) nodes.
+func (c *TestCluster) RunningNodeCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.nodes) - len(c.stoppedNodes)
+}
+
+// ProposeOnLeader proposes a command on the current leader.
+// Returns the log index and term, or error if no leader or proposal fails.
+func (c *TestCluster) ProposeOnLeader(cmd *raft.Command) (int64, int64, error) {
+	leader := c.Leader()
+	if leader == nil {
+		return 0, 0, fmt.Errorf("no leader available")
+	}
+
+	data, err := cmd.Encode()
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to encode command: %w", err)
+	}
+
+	return leader.Node.Propose(data)
 }

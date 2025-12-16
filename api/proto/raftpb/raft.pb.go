@@ -527,7 +527,7 @@ const file_api_proto_raft_proto_rawDesc = "" +
 	"\vRaftService\x12F\n" +
 	"\vRequestVote\x12\x1a.raftpb.RequestVoteRequest\x1a\x1b.raftpb.RequestVoteResponse\x12L\n" +
 	"\rAppendEntries\x12\x1c.raftpb.AppendEntriesRequest\x1a\x1d.raftpb.AppendEntriesResponse\x12R\n" +
-	"\x0fInstallSnapshot\x12\x1e.raftpb.InstallSnapshotRequest\x1a\x1f.raftpb.InstallSnapshotResponseB9Z7github.com/yourusername/distributed-kv/api/proto/raftpbb\x06proto3"
+	"\x0fInstallSnapshot\x12\x1e.raftpb.InstallSnapshotRequest\x1a\x1f.raftpb.InstallSnapshotResponseBJZHgithub.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpbb\x06proto3"
 
 var (
 	file_api_proto_raft_proto_rawDescOnce sync.Once

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package kvpb;
 
-option go_package = "github.com/yourusername/distributed-kv/api/proto/kvpb";
+option go_package = "github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/kvpb";
 
 // Get RPC - Read a key
 message GetRequest {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/yourusername/distributed-kv/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
 )
 
 // leaderLoop is the main loop for the leader.

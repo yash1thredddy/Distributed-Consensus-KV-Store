@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/yourusername/distributed-kv/internal/storage"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 )
 
 func TestLog_EmptyLog(t *testing.T) {

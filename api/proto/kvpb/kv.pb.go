@@ -541,7 +541,7 @@ const file_api_proto_kv_proto_rawDesc = "" +
 	"\x03Get\x12\x10.kvpb.GetRequest\x1a\x11.kvpb.GetResponse\x12*\n" +
 	"\x03Put\x12\x10.kvpb.PutRequest\x1a\x11.kvpb.PutResponse\x123\n" +
 	"\x06Delete\x12\x13.kvpb.DeleteRequest\x1a\x14.kvpb.DeleteResponse\x12B\n" +
-	"\vClusterInfo\x12\x18.kvpb.ClusterInfoRequest\x1a\x19.kvpb.ClusterInfoResponseB7Z5github.com/yourusername/distributed-kv/api/proto/kvpbb\x06proto3"
+	"\vClusterInfo\x12\x18.kvpb.ClusterInfoRequest\x1a\x19.kvpb.ClusterInfoResponseBHZFgithub.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/kvpbb\x06proto3"
 
 var (
 	file_api_proto_kv_proto_rawDescOnce sync.Once
