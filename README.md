@@ -15,7 +15,7 @@ This is a production-grade distributed key-value store that uses the Raft consen
 - **Language**: Go 1.21+
 - **Consensus**: Raft Protocol
 - **RPC**: gRPC + Protocol Buffers
-- **Storage**: RocksDB
+- **Storage**: BadgerDB (pure Go, no CGO required)
 - **Metrics**: Prometheus
 - **Dashboard**: React + Vite + Tailwind
 
@@ -44,8 +44,9 @@ distributed-kv/
 
 - Go 1.21 or higher
 - Protocol Buffers compiler (protoc)
-- RocksDB
 - Docker and Docker Compose (for cluster testing)
+
+> **Note**: BadgerDB is a pure Go library - no CGO or external dependencies required!
 
 ### Build
 
@@ -82,8 +83,8 @@ make cluster-down
 ## Implementation Phases
 
 1. **Phase 1**: Foundation (project setup, protos, types) ✓
-2. **Phase 2**: Storage layer (In Progress)
-3. **Phase 3**: Transport layer
+2. **Phase 2**: Storage layer (BadgerDB + in-memory) ✓
+3. **Phase 3**: Transport layer (gRPC server/client) ✓
 4. **Phase 4**: Raft consensus core
 5. **Phase 5**: KV server API
 6. **Phase 6**: Observability and dashboard
