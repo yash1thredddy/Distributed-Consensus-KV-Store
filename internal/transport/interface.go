@@ -6,38 +6,79 @@ import (
 	"github.com/yourusername/distributed-kv/api/proto/raftpb"
 )
 
-// Transport defines the interface for Raft node communication.
-// It provides methods to send RPCs to peers and register handlers
-// for incoming RPCs.
-type Transport interface {
-	// SendRequestVote sends a RequestVote RPC to a specific peer.
+// --------------------------------------------------------------------------
+// Interface Segregation: Small, focused interfaces for different capabilities
+// --------------------------------------------------------------------------
+
+// VoteSender defines the ability to send vote requests.
+type VoteSender interface {
 	SendRequestVote(ctx context.Context, peer string, req *raftpb.RequestVoteRequest) (*raftpb.RequestVoteResponse, error)
+}
 
-	// SendAppendEntries sends an AppendEntries RPC to a specific peer.
+// EntriesSender defines the ability to send log entries.
+type EntriesSender interface {
 	SendAppendEntries(ctx context.Context, peer string, req *raftpb.AppendEntriesRequest) (*raftpb.AppendEntriesResponse, error)
+}
 
-	// SendInstallSnapshot sends an InstallSnapshot RPC to a specific peer.
+// SnapshotSender defines the ability to send snapshots.
+type SnapshotSender interface {
 	SendInstallSnapshot(ctx context.Context, peer string, req *raftpb.InstallSnapshotRequest) (*raftpb.InstallSnapshotResponse, error)
+}
 
-	// RegisterRaftHandler registers a handler for incoming Raft RPCs.
+// RPCSender combines all RPC sending capabilities.
+// Used by: RaftNode for sending all types of RPCs
+type RPCSender interface {
+	VoteSender
+	EntriesSender
+	SnapshotSender
+}
+
+// HandlerRegistry defines the ability to register RPC handlers.
+type HandlerRegistry interface {
 	RegisterRaftHandler(handler RaftHandler)
+}
 
-	// Start starts the transport server.
+// Lifecycle defines start/stop operations.
+type Lifecycle interface {
 	Start() error
-
-	// Stop stops the transport and cleans up resources.
 	Stop() error
 }
 
-// RaftHandler defines the interface that Raft nodes must implement
-// to handle incoming RPCs.
-type RaftHandler interface {
-	// HandleRequestVote handles an incoming RequestVote RPC.
+// --------------------------------------------------------------------------
+// Composite interfaces
+// --------------------------------------------------------------------------
+
+// Transport defines the full interface for Raft node communication.
+// Implementations (GRPCTransport) implement this complete interface.
+type Transport interface {
+	RPCSender
+	HandlerRegistry
+	Lifecycle
+}
+
+// --------------------------------------------------------------------------
+// Handler interfaces (for incoming RPCs)
+// --------------------------------------------------------------------------
+
+// VoteHandler handles incoming vote requests.
+type VoteHandler interface {
 	HandleRequestVote(ctx context.Context, req *raftpb.RequestVoteRequest) (*raftpb.RequestVoteResponse, error)
+}
 
-	// HandleAppendEntries handles an incoming AppendEntries RPC.
+// EntriesHandler handles incoming append entries requests.
+type EntriesHandler interface {
 	HandleAppendEntries(ctx context.Context, req *raftpb.AppendEntriesRequest) (*raftpb.AppendEntriesResponse, error)
+}
 
-	// HandleInstallSnapshot handles an incoming InstallSnapshot RPC.
+// SnapshotHandler handles incoming install snapshot requests.
+type SnapshotHandler interface {
 	HandleInstallSnapshot(ctx context.Context, req *raftpb.InstallSnapshotRequest) (*raftpb.InstallSnapshotResponse, error)
+}
+
+// RaftHandler combines all handler interfaces.
+// Implemented by: RaftNode
+type RaftHandler interface {
+	VoteHandler
+	EntriesHandler
+	SnapshotHandler
 }

@@ -11,8 +11,8 @@ import (
 // Index 0 is a virtual sentinel entry (never stored).
 type Log struct {
 	mu        sync.RWMutex
-	storage   storage.Storage
-	lastIndex int64 // Index of last entry (0 if empty)
+	storage   storage.LogStorage // Uses segregated interface (ISP)
+	lastIndex int64              // Index of last entry (0 if empty)
 
 	// Cache for recent entries (optional optimization)
 	cache       map[int64]*LogEntry
@@ -21,7 +21,8 @@ type Log struct {
 }
 
 // NewLog creates a new Log backed by the given storage.
-func NewLog(s storage.Storage) *Log {
+// Accepts LogStorage interface (ISP) - any storage implementing log operations.
+func NewLog(s storage.LogStorage) *Log {
 	l := &Log{
 		storage:   s,
 		cache:     make(map[int64]*LogEntry),
