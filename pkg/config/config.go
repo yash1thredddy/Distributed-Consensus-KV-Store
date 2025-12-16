@@ -21,8 +21,12 @@ type Config struct {
 	// HTTPAddr is the address for HTTP API (e.g., ":8080")
 	HTTPAddr string
 
-	// Peers is the list of peer addresses
+	// Peers is the list of peer Raft addresses (hostname:port)
 	Peers []string
+
+	// PeerHTTPAddrs maps node IDs to their HTTP addresses for forwarding
+	// If not set, forwarding is disabled and clients must redirect themselves
+	PeerHTTPAddrs map[string]string
 
 	// ElectionTimeoutMin is the minimum election timeout
 	ElectionTimeoutMin time.Duration
@@ -82,6 +86,9 @@ func Load(path string) (*Config, error) {
 	}
 	if viper.IsSet("peers") {
 		cfg.Peers = viper.GetStringSlice("peers")
+	}
+	if viper.IsSet("peer_http_addrs") {
+		cfg.PeerHTTPAddrs = viper.GetStringMapString("peer_http_addrs")
 	}
 	if viper.IsSet("election_timeout_min") {
 		cfg.ElectionTimeoutMin = viper.GetDuration("election_timeout_min")

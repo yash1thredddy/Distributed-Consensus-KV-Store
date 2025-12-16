@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/metrics"
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/transport"
 )
@@ -184,6 +185,14 @@ func (rn *RaftNode) restoreState() error {
 	}
 	rn.log.lastIndex = lastIndex
 
+	// Initialize metrics with restored state
+	metrics.RaftCurrentTerm.Set(float64(rn.currentTerm))
+	metrics.RaftState.WithLabelValues(rn.id).Set(float64(Follower))
+	metrics.RaftIsLeader.Set(0)
+	metrics.RaftCommitIndex.Set(float64(rn.commitIndex))
+	metrics.RaftLastApplied.Set(float64(rn.lastApplied))
+	metrics.RaftLogEntries.Set(float64(lastIndex))
+
 	return nil
 }
 
@@ -336,9 +345,18 @@ func (rn *RaftNode) signalStepDown() {
 // stepDown transitions to follower and updates term.
 // Must be called with mu held.
 func (rn *RaftNode) stepDown(newTerm int64) {
+	wasLeader := rn.state == Leader
 	rn.currentTerm = newTerm
 	rn.votedFor = ""
 	rn.state = Follower
+
+	// Update metrics
+	metrics.RaftCurrentTerm.Set(float64(newTerm))
+	metrics.RaftState.WithLabelValues(rn.id).Set(float64(Follower))
+	metrics.RaftIsLeader.Set(0)
+	if wasLeader {
+		metrics.RaftLeaderChanges.Inc()
+	}
 
 	// Persist state
 	if err := rn.persistState(); err != nil {

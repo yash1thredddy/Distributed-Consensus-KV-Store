@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/metrics"
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/storage"
 )
@@ -163,6 +164,7 @@ func (kv *KVServer) handleApplyMsg(msg raft.ApplyMsg) {
 		kv.mu.Lock()
 		if ch, ok := kv.pendingOps[requestID]; ok {
 			delete(kv.pendingOps, requestID)
+			metrics.KVPendingOperations.Set(float64(len(kv.pendingOps)))
 			kv.mu.Unlock()
 
 			select {
@@ -219,12 +221,18 @@ func (kv *KVServer) applySnapshot(data []byte) {
 // The current implementation is suitable for most use cases where the brief
 // race window is acceptable.
 func (kv *KVServer) Get(ctx context.Context, key string, linearizable bool) ([]byte, bool, error) {
+	startTime := time.Now()
+	defer func() {
+		metrics.KVOperationDuration.WithLabelValues(metrics.KVOpGet).Observe(time.Since(startTime).Seconds())
+	}()
+
 	if linearizable {
 		// For linearizable reads, we need to ensure we're reading from a leader
 		// that has committed all previous entries.
 		// Note: This is a best-effort implementation. See function documentation
 		// for limitations regarding the theoretical race window.
 		if !kv.raft.IsLeader() {
+			metrics.KVOperations.WithLabelValues(metrics.KVOpGet, metrics.KVStatusError).Inc()
 			return nil, false, kv.notLeaderError()
 		}
 
@@ -242,12 +250,14 @@ func (kv *KVServer) Get(ctx context.Context, key string, linearizable bool) ([]b
 				}
 				select {
 				case <-ctx.Done():
+					metrics.KVOperations.WithLabelValues(metrics.KVOpGet, metrics.KVStatusError).Inc()
 					return nil, false, ctx.Err()
 				case <-time.After(10 * time.Millisecond):
 				}
 			}
 
 			if kv.raft.LastApplied() < commitIndex {
+				metrics.KVOperations.WithLabelValues(metrics.KVOpGet, metrics.KVStatusError).Inc()
 				return nil, false, ErrTimeout
 			}
 		}
@@ -257,29 +267,48 @@ func (kv *KVServer) Get(ctx context.Context, key string, linearizable bool) ([]b
 	value, err := kv.storage.Get([]byte(key))
 	if err != nil {
 		if errors.Is(err, storage.ErrKeyNotFound) {
+			metrics.KVOperations.WithLabelValues(metrics.KVOpGet, metrics.KVStatusSuccess).Inc()
 			return nil, false, nil
 		}
+		metrics.KVOperations.WithLabelValues(metrics.KVOpGet, metrics.KVStatusError).Inc()
 		return nil, false, err
 	}
 
+	metrics.KVOperations.WithLabelValues(metrics.KVOpGet, metrics.KVStatusSuccess).Inc()
 	return value, true, nil
 }
 
 // Put stores a key-value pair.
 func (kv *KVServer) Put(ctx context.Context, key string, value []byte) error {
-	return kv.propose(ctx, &raft.Command{
+	startTime := time.Now()
+	err := kv.propose(ctx, &raft.Command{
 		Type:  raft.CommandPut,
 		Key:   key,
 		Value: value,
 	})
+	metrics.KVOperationDuration.WithLabelValues(metrics.KVOpPut).Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		metrics.KVOperations.WithLabelValues(metrics.KVOpPut, metrics.KVStatusError).Inc()
+	} else {
+		metrics.KVOperations.WithLabelValues(metrics.KVOpPut, metrics.KVStatusSuccess).Inc()
+	}
+	return err
 }
 
 // Delete removes a key.
 func (kv *KVServer) Delete(ctx context.Context, key string) error {
-	return kv.propose(ctx, &raft.Command{
+	startTime := time.Now()
+	err := kv.propose(ctx, &raft.Command{
 		Type: raft.CommandDelete,
 		Key:  key,
 	})
+	metrics.KVOperationDuration.WithLabelValues(metrics.KVOpDelete).Observe(time.Since(startTime).Seconds())
+	if err != nil {
+		metrics.KVOperations.WithLabelValues(metrics.KVOpDelete, metrics.KVStatusError).Inc()
+	} else {
+		metrics.KVOperations.WithLabelValues(metrics.KVOpDelete, metrics.KVStatusSuccess).Inc()
+	}
+	return err
 }
 
 // propose submits a command through Raft and waits for it to be applied.
@@ -297,7 +326,11 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 	resultCh := make(chan OpResult, 1)
 	kv.mu.Lock()
 	kv.pendingOps[requestID] = resultCh
+	pendingCount := len(kv.pendingOps)
 	kv.mu.Unlock()
+
+	// Update pending operations metric
+	metrics.KVPendingOperations.Set(float64(pendingCount))
 
 	// Encode the command (after setting RequestID)
 	data, err := cmd.Encode()
@@ -305,6 +338,7 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		// Clean up on encode error
 		kv.mu.Lock()
 		delete(kv.pendingOps, requestID)
+		metrics.KVPendingOperations.Set(float64(len(kv.pendingOps)))
 		kv.mu.Unlock()
 		return err
 	}
@@ -315,6 +349,7 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		// Clean up on propose error
 		kv.mu.Lock()
 		delete(kv.pendingOps, requestID)
+		metrics.KVPendingOperations.Set(float64(len(kv.pendingOps)))
 		kv.mu.Unlock()
 
 		// Check if it's a not-leader error
@@ -334,6 +369,7 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		// Clean up pending op
 		kv.mu.Lock()
 		delete(kv.pendingOps, requestID)
+		metrics.KVPendingOperations.Set(float64(len(kv.pendingOps)))
 		kv.mu.Unlock()
 		return ctx.Err()
 
@@ -344,10 +380,12 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		// Clean up pending op
 		kv.mu.Lock()
 		delete(kv.pendingOps, requestID)
+		metrics.KVPendingOperations.Set(float64(len(kv.pendingOps)))
 		kv.mu.Unlock()
 		return ErrTimeout
 
 	case result := <-resultCh:
+		// Operation completed, metric will be updated when handleApplyMsg removes from pendingOps
 		return result.Err
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/metrics"
 )
 
 // leaderLoop is the main loop for the leader.
@@ -95,11 +96,17 @@ func (rn *RaftNode) sendAppendEntries(peerID string, currentTerm, commitIndex in
 		LeaderCommit: commitIndex,
 	}
 
+	// Record batch size metric
+	metrics.AppendEntriesBatchSize.Observe(float64(len(entries)))
+
 	ctx, cancel := context.WithTimeout(context.Background(), RPCTimeout)
 	defer cancel()
 
+	startTime := time.Now()
 	resp, err := rn.transport.SendAppendEntries(ctx, peerAddr, req)
+	metrics.RPCDuration.WithLabelValues(metrics.RPCTypeAppendEntries).Observe(time.Since(startTime).Seconds())
 	if err != nil {
+		metrics.RPCErrors.WithLabelValues(metrics.RPCTypeAppendEntries, metrics.ErrorTypeConnection).Inc()
 		return
 	}
 
@@ -168,6 +175,8 @@ func (rn *RaftNode) checkCommit() {
 		return
 	}
 
+	oldCommitIndex := rn.commitIndex
+
 	// For each index from commitIndex+1 to lastIndex
 	for n := rn.commitIndex + 1; n <= rn.log.LastIndex(); n++ {
 		// Only commit entries from current term (Raft safety)
@@ -188,6 +197,11 @@ func (rn *RaftNode) checkCommit() {
 			rn.commitIndex = n
 		}
 	}
+
+	// Update commit index metric if changed
+	if rn.commitIndex > oldCommitIndex {
+		metrics.RaftCommitIndex.Set(float64(rn.commitIndex))
+	}
 }
 
 // applyLoop applies committed entries to the state machine.
@@ -204,9 +218,11 @@ func (rn *RaftNode) applyLoop() {
 		// Check for entries to apply
 		rn.mu.Lock()
 		var toApply []ApplyMsg
+		var newLastApplied int64
 
 		for rn.lastApplied < rn.commitIndex {
 			rn.lastApplied++
+			newLastApplied = rn.lastApplied
 			entry := rn.log.GetEntry(rn.lastApplied)
 			if entry == nil {
 				break
@@ -226,6 +242,11 @@ func (rn *RaftNode) applyLoop() {
 			})
 		}
 		rn.mu.Unlock()
+
+		// Update last applied metric if changed
+		if newLastApplied > 0 {
+			metrics.RaftLastApplied.Set(float64(newLastApplied))
+		}
 
 		// Apply entries without holding lock
 		for _, msg := range toApply {
@@ -270,6 +291,9 @@ func (rn *RaftNode) Propose(command []byte) (index int64, term int64, err error)
 	if err := rn.log.Append(entry); err != nil {
 		return 0, 0, err
 	}
+
+	// Update log entries metric
+	metrics.RaftLogEntries.Set(float64(entry.Index))
 
 	// Trigger immediate replication
 	rn.triggerReplication()

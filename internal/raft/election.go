@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/api/proto/raftpb"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/metrics"
 )
 
 // electionTimer runs the election timeout loop.
@@ -59,10 +60,17 @@ func (rn *RaftNode) startElection() {
 	peers := make([]string, len(rn.peers))
 	copy(peers, rn.peers)
 
+	// Update metrics
+	metrics.RaftElectionCount.Inc()
+	metrics.RaftCurrentTerm.Set(float64(currentTerm))
+	metrics.RaftState.WithLabelValues(rn.id).Set(float64(Candidate))
+	metrics.RaftIsLeader.Set(0)
+
 	// Persist state before sending RequestVote
 	if err := rn.persistState(); err != nil {
 		// Failed to persist, abort election
 		rn.state = Follower
+		metrics.RaftState.WithLabelValues(rn.id).Set(float64(Follower))
 		rn.mu.Unlock()
 		return
 	}
@@ -132,8 +140,11 @@ func (rn *RaftNode) sendRequestVote(peerID string, term, lastLogIndex, lastLogTe
 	ctx, cancel := context.WithTimeout(context.Background(), RPCTimeout)
 	defer cancel()
 
+	startTime := time.Now()
 	resp, err := rn.transport.SendRequestVote(ctx, peerAddr, req)
+	metrics.RPCDuration.WithLabelValues(metrics.RPCTypeRequestVote).Observe(time.Since(startTime).Seconds())
 	if err != nil {
+		metrics.RPCErrors.WithLabelValues(metrics.RPCTypeRequestVote, metrics.ErrorTypeConnection).Inc()
 		return
 	}
 
@@ -171,6 +182,11 @@ func (rn *RaftNode) becomeLeader() {
 	rn.state = Leader
 	rn.leaderId = rn.id
 
+	// Update metrics for becoming leader
+	metrics.RaftLeaderChanges.Inc()
+	metrics.RaftState.WithLabelValues(rn.id).Set(float64(Leader))
+	metrics.RaftIsLeader.Set(1)
+
 	// Initialize nextIndex and matchIndex for all peers
 	lastIndex := rn.log.LastIndex()
 	for _, peer := range rn.peers {
@@ -189,6 +205,9 @@ func (rn *RaftNode) becomeLeader() {
 		rn.stepDown(rn.currentTerm)
 		return
 	}
+
+	// Update log entries metric
+	metrics.RaftLogEntries.Set(float64(rn.log.LastIndex()))
 
 	// Start leader goroutine
 	rn.wg.Add(1)
