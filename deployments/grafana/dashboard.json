@@ -415,8 +415,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(raft_commit_index) - raft_commit_index",
-          "legendFormat": "{{instance}}",
+          "expr": "scalar(max(raft_commit_index)) - raft_commit_index",
+          "legendFormat": "{{node}}",
           "refId": "A"
         }
       ],

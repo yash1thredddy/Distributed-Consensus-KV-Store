@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/metrics"
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
 )
 
@@ -151,6 +152,7 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	// Register client
 	h.mu.Lock()
 	h.clients[conn] = cc
+	metrics.WebSocketConnections.Set(float64(len(h.clients)))
 	h.mu.Unlock()
 
 	// Send initial state
@@ -182,6 +184,7 @@ func (h *WebSocketHandler) removeClient(conn *websocket.Conn, cc *clientConn) {
 	cc.closeOnce.Do(func() {
 		h.mu.Lock()
 		delete(h.clients, conn)
+		metrics.WebSocketConnections.Set(float64(len(h.clients)))
 		h.mu.Unlock()
 		conn.Close()
 	})

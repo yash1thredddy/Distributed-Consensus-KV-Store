@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -18,15 +21,36 @@ const MaxRequestBodySize = 1 << 20 // 1MB
 
 // HTTPHandler provides REST API handlers for the KV server.
 type HTTPHandler struct {
-	kv       *KVServer
-	raftNode *raft.RaftNode
+	kv            *KVServer
+	raftNode      *raft.RaftNode
+	peerHTTPAddrs map[string]string // Maps node ID to HTTP address for forwarding
+	httpClient    *http.Client      // Client for forwarding requests
+}
+
+// HTTPHandlerConfig holds configuration for the HTTP handler.
+type HTTPHandlerConfig struct {
+	KV            *KVServer
+	RaftNode      *raft.RaftNode
+	PeerHTTPAddrs map[string]string // Optional: enables leader forwarding if set
 }
 
 // NewHTTPHandler creates a new HTTP handler.
 func NewHTTPHandler(kv *KVServer, raftNode *raft.RaftNode) *HTTPHandler {
+	return NewHTTPHandlerWithConfig(&HTTPHandlerConfig{
+		KV:       kv,
+		RaftNode: raftNode,
+	})
+}
+
+// NewHTTPHandlerWithConfig creates a new HTTP handler with full configuration.
+func NewHTTPHandlerWithConfig(cfg *HTTPHandlerConfig) *HTTPHandler {
 	return &HTTPHandler{
-		kv:       kv,
-		raftNode: raftNode,
+		kv:            cfg.KV,
+		raftNode:      cfg.RaftNode,
+		peerHTTPAddrs: cfg.PeerHTTPAddrs,
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
 	}
 }
 
@@ -156,6 +180,10 @@ func (h *HTTPHandler) handlePut(w http.ResponseWriter, r *http.Request, key stri
 
 	err = h.kv.Put(r.Context(), key, body)
 	if err != nil {
+		// Try to forward to leader if we're not the leader and forwarding is enabled
+		if h.tryForwardToLeader(w, r, body, err) {
+			return
+		}
 		h.handleError(w, err)
 		return
 	}
@@ -167,11 +195,80 @@ func (h *HTTPHandler) handlePut(w http.ResponseWriter, r *http.Request, key stri
 func (h *HTTPHandler) handleDelete(w http.ResponseWriter, r *http.Request, key string) {
 	err := h.kv.Delete(r.Context(), key)
 	if err != nil {
+		// Try to forward to leader if we're not the leader and forwarding is enabled
+		if h.tryForwardToLeader(w, r, nil, err) {
+			return
+		}
 		h.handleError(w, err)
 		return
 	}
 
 	h.writeJSON(w, http.StatusOK, DeleteResponse{Success: true})
+}
+
+// tryForwardToLeader attempts to forward a request to the leader if:
+// 1. The error is a "not leader" error
+// 2. We have the leader's HTTP address configured
+// Returns true if the request was forwarded (response already written), false otherwise.
+func (h *HTTPHandler) tryForwardToLeader(w http.ResponseWriter, r *http.Request, body []byte, err error) bool {
+	// Check if it's a not-leader error
+	var notLeaderErr *ErrNotLeaderWithHint
+	if !errors.As(err, &notLeaderErr) {
+		return false
+	}
+
+	// Check if we have forwarding configured and know the leader
+	if h.peerHTTPAddrs == nil || notLeaderErr.LeaderID == "" {
+		return false
+	}
+
+	leaderHTTPAddr, ok := h.peerHTTPAddrs[notLeaderErr.LeaderID]
+	if !ok || leaderHTTPAddr == "" {
+		return false
+	}
+
+	// Build the forward URL
+	forwardURL := fmt.Sprintf("http://%s%s", leaderHTTPAddr, r.URL.Path)
+	if r.URL.RawQuery != "" {
+		forwardURL += "?" + r.URL.RawQuery
+	}
+
+	// Create the forwarded request
+	var reqBody io.Reader
+	if body != nil {
+		reqBody = bytes.NewReader(body)
+	}
+
+	forwardReq, err := http.NewRequestWithContext(r.Context(), r.Method, forwardURL, reqBody)
+	if err != nil {
+		return false
+	}
+
+	// Copy relevant headers
+	forwardReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	// Add header to indicate this is a forwarded request (prevent infinite loops)
+	forwardReq.Header.Set("X-Forwarded-From", h.raftNode.ID())
+
+	// Execute the forwarded request
+	resp, err := h.httpClient.Do(forwardReq)
+	if err != nil {
+		// Forwarding failed, fall back to returning the not-leader error
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Copy status code and body
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+
+	return true
 }
 
 // handleClusterInfo handles GET /cluster/info.
