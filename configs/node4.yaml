@@ -1,0 +1,13 @@
+node_id: node4
+data_dir: ./data/node4
+raft_addr: :5004
+http_addr: :8084
+peers:
+  - localhost:5001
+  - localhost:5002
+  - localhost:5003
+  - localhost:5005
+election_timeout_min: 150ms
+election_timeout_max: 300ms
+heartbeat_interval: 50ms
+snapshot_threshold: 10000

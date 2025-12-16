@@ -7,7 +7,7 @@ A Raft-based distributed key-value store implementation in Go, providing strong 
 This is a distributed key-value store that uses the **Raft consensus algorithm** to ensure data consistency across multiple nodes. It's designed to be:
 
 - **Strongly consistent** - All reads return the most recent write (linearizability)
-- **Fault tolerant** - Continues operating even when nodes fail (survives N/2-1 failures)
+- **Fault tolerant** - Continues operating even when nodes fail (survives up to (N-1)/2 failures, e.g., 2 of 5 nodes)
 - **Self-healing** - Automatically elects new leaders and recovers from failures
 - **Persistent** - Data survives node restarts through durable storage
 
@@ -100,7 +100,7 @@ distributed-kv/
 
 | Component | Technology | Why |
 |-----------|------------|-----|
-| Language | Go 1.21+ | Excellent concurrency, static typing, fast compilation |
+| Language | Go 1.24+ | Excellent concurrency, static typing, fast compilation |
 | Consensus | Raft | Understandable, proven, widely adopted |
 | RPC | gRPC + Protobuf | Efficient binary protocol, strong typing |
 | Storage | BadgerDB | Pure Go, LSM-tree based, no CGO required |

@@ -197,8 +197,9 @@ func (rn *RaftNode) HandleInstallSnapshot(ctx context.Context, req *raftpb.Insta
 		return resp, nil
 	}
 
-	// Truncate log up to snapshot point
-	if err := rn.storage.TruncateLogBefore(req.LastIncludedIndex + 1); err != nil {
+	// Truncate log up to snapshot point - use Log.TruncateBefore to keep
+	// in-memory Log state consistent with storage
+	if err := rn.log.TruncateBefore(req.LastIncludedIndex + 1); err != nil {
 		rn.logger.Error("failed to truncate log before snapshot",
 			zap.Int64("index", req.LastIncludedIndex+1),
 			zap.Error(err))

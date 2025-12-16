@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Raft cluster nodes
+  - job_name: 'raft-cluster'
+    static_configs:
+      - targets:
+          - 'node1:8080'
+          - 'node2:8080'
+          - 'node3:8080'
+          - 'node4:8080'
+          - 'node5:8080'
+        labels:
+          cluster: 'distributed-kv'
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '([^:]+):.*'
+        target_label: node
+        replacement: '${1}'
+    metrics_path: /metrics
+    scheme: http

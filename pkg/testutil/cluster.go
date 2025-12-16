@@ -32,7 +32,8 @@ type TestCluster struct {
 	nodes        map[string]*TestNode
 	nodeOrder    []string          // Order of nodes for deterministic iteration
 	stoppedNodes map[string]bool   // Tracks which nodes have been stopped
-	started      bool
+	started      bool              // Whether the cluster is currently running
+	initialized  bool              // Whether the cluster has been started at least once
 	config       ClusterConfig
 }
 
@@ -103,9 +104,12 @@ func (c *TestCluster) Start() error {
 		return nil
 	}
 
-	// Recreate nodes on restart (channels cannot be reopened)
-	if err := c.recreateNodes(); err != nil {
-		return err
+	// Only recreate nodes on restart (not on first start).
+	// Channels cannot be reopened, so we need fresh nodes for restarts.
+	if c.initialized {
+		if err := c.recreateNodes(); err != nil {
+			return err
+		}
 	}
 
 	// Start transports first
@@ -128,6 +132,7 @@ func (c *TestCluster) Start() error {
 	// Clear all stopped node flags
 	c.stoppedNodes = make(map[string]bool)
 	c.started = true
+	c.initialized = true
 	return nil
 }
 
@@ -246,13 +251,17 @@ func (c *TestCluster) Nodes() []*TestNode {
 	return nodes
 }
 
-// Followers returns all follower nodes.
+// Followers returns all follower nodes (excludes stopped nodes).
 func (c *TestCluster) Followers() []*TestNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	followers := make([]*TestNode, 0)
 	for _, id := range c.nodeOrder {
+		// Skip stopped nodes for consistency with Leader()
+		if c.stoppedNodes[id] {
+			continue
+		}
 		if node := c.nodes[id]; node.IsFollower() {
 			followers = append(followers, node)
 		}
@@ -321,12 +330,17 @@ func (c *TestCluster) RestartNode(id string) error {
 	return nil
 }
 
-// AllNodesHaveEntry returns true if all nodes have committed the given entry.
+// AllNodesHaveEntry returns true if all running nodes have committed the given entry.
+// Stopped nodes are excluded to prevent WaitForCommit from hanging.
 func (c *TestCluster) AllNodesHaveEntry(index int64) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
 	for _, id := range c.nodeOrder {
+		// Skip stopped nodes - they won't have current commit index
+		if c.stoppedNodes[id] {
+			continue
+		}
 		if c.nodes[id].CommitIndex() < index {
 			return false
 		}

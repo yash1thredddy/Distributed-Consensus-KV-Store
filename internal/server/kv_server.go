@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
@@ -33,9 +34,14 @@ type KVServer struct {
 	raft    *raft.RaftNode
 	storage storage.KVStorage // Uses segregated interface (ISP) - only KV ops needed
 
-	// pendingOps tracks pending operations by log index
-	// When an entry is applied, we look up the channel and send the result
-	pendingOps map[int64]chan OpResult
+	// pendingOps tracks pending operations by request ID (not log index).
+	// Using request ID avoids a race condition: we can register the channel
+	// BEFORE calling Propose(), so even if the entry is applied very quickly,
+	// handleApplyMsg will find the channel.
+	pendingOps map[uint64]chan OpResult
+
+	// nextRequestID is an atomic counter for generating unique request IDs
+	nextRequestID uint64
 
 	// stopCh signals shutdown
 	stopCh chan struct{}
@@ -73,7 +79,7 @@ func NewKVServer(cfg *KVServerConfig) *KVServer {
 	kv := &KVServer{
 		raft:             cfg.Raft,
 		storage:          cfg.Storage,
-		pendingOps:       make(map[int64]chan OpResult),
+		pendingOps:       make(map[uint64]chan OpResult),
 		stopCh:           make(chan struct{}),
 		operationTimeout: timeout,
 	}
@@ -90,10 +96,8 @@ func (kv *KVServer) Start() error {
 
 // Stop stops the KV server.
 func (kv *KVServer) Stop() error {
-	close(kv.stopCh)
-	kv.wg.Wait()
-
-	// Cancel all pending operations
+	// Cancel all pending operations BEFORE stopping goroutines.
+	// This ensures in-flight requests get a response rather than timing out.
 	kv.mu.Lock()
 	for _, ch := range kv.pendingOps {
 		select {
@@ -101,8 +105,12 @@ func (kv *KVServer) Stop() error {
 		default:
 		}
 	}
-	kv.pendingOps = make(map[int64]chan OpResult)
+	kv.pendingOps = make(map[uint64]chan OpResult)
 	kv.mu.Unlock()
+
+	// Now signal goroutines to stop and wait for them
+	close(kv.stopCh)
+	kv.wg.Wait()
 
 	return nil
 }
@@ -140,25 +148,30 @@ func (kv *KVServer) handleApplyMsg(msg raft.ApplyMsg) {
 
 	// Apply the command (already decoded by Raft layer)
 	var result OpResult
+	var requestID uint64
 
 	if msg.Command == nil {
 		result.Err = errors.New("nil command")
 	} else {
 		result = kv.applyCommand(msg.Command)
+		requestID = msg.Command.RequestID
 	}
 
-	// Notify any waiting client
-	kv.mu.Lock()
-	if ch, ok := kv.pendingOps[msg.CommandIndex]; ok {
-		delete(kv.pendingOps, msg.CommandIndex)
-		kv.mu.Unlock()
+	// Notify any waiting client using the request ID
+	// This avoids the race condition of registering by log index after Propose
+	if requestID != 0 {
+		kv.mu.Lock()
+		if ch, ok := kv.pendingOps[requestID]; ok {
+			delete(kv.pendingOps, requestID)
+			kv.mu.Unlock()
 
-		select {
-		case ch <- result:
-		default:
+			select {
+			case ch <- result:
+			default:
+			}
+		} else {
+			kv.mu.Unlock()
 		}
-	} else {
-		kv.mu.Unlock()
 	}
 }
 
@@ -271,20 +284,39 @@ func (kv *KVServer) Delete(ctx context.Context, key string) error {
 
 // propose submits a command through Raft and waits for it to be applied.
 func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
-	// Encode the command
+	// Generate a unique request ID and assign it to the command.
+	// This allows us to register the result channel BEFORE calling Propose,
+	// avoiding the race condition where the entry is applied before we can
+	// register by log index.
+	requestID := atomic.AddUint64(&kv.nextRequestID, 1)
+	cmd.RequestID = requestID
+
+	// Create and register the result channel BEFORE proposing.
+	// This ensures handleApplyMsg will find the channel even if the entry
+	// is applied very quickly (e.g., single-node cluster).
+	resultCh := make(chan OpResult, 1)
+	kv.mu.Lock()
+	kv.pendingOps[requestID] = resultCh
+	kv.mu.Unlock()
+
+	// Encode the command (after setting RequestID)
 	data, err := cmd.Encode()
 	if err != nil {
+		// Clean up on encode error
+		kv.mu.Lock()
+		delete(kv.pendingOps, requestID)
+		kv.mu.Unlock()
 		return err
 	}
 
-	// Create result channel before proposing to avoid race condition.
-	// If the entry is applied very quickly (e.g., single-node cluster),
-	// handleApplyMsg might look for the channel before we register it.
-	resultCh := make(chan OpResult, 1)
-
 	// Propose to Raft
-	index, _, err := kv.raft.Propose(data)
+	_, _, err = kv.raft.Propose(data)
 	if err != nil {
+		// Clean up on propose error
+		kv.mu.Lock()
+		delete(kv.pendingOps, requestID)
+		kv.mu.Unlock()
+
 		// Check if it's a not-leader error
 		var notLeaderErr *raft.ErrNotLeaderWithHint
 		if errors.As(err, &notLeaderErr) {
@@ -296,17 +328,12 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 		return err
 	}
 
-	// Register the result channel now that we have the index
-	kv.mu.Lock()
-	kv.pendingOps[index] = resultCh
-	kv.mu.Unlock()
-
 	// Wait for the result or timeout
 	select {
 	case <-ctx.Done():
 		// Clean up pending op
 		kv.mu.Lock()
-		delete(kv.pendingOps, index)
+		delete(kv.pendingOps, requestID)
 		kv.mu.Unlock()
 		return ctx.Err()
 
@@ -316,7 +343,7 @@ func (kv *KVServer) propose(ctx context.Context, cmd *raft.Command) error {
 	case <-time.After(kv.operationTimeout):
 		// Clean up pending op
 		kv.mu.Lock()
-		delete(kv.pendingOps, index)
+		delete(kv.pendingOps, requestID)
 		kv.mu.Unlock()
 		return ErrTimeout
 

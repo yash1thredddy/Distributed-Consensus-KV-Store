@@ -60,9 +60,10 @@ func (t CommandType) String() string {
 
 // Command represents a KV operation
 type Command struct {
-	Type  CommandType `json:"type"`
-	Key   string      `json:"key"`
-	Value []byte      `json:"value,omitempty"`
+	Type      CommandType `json:"type"`
+	Key       string      `json:"key"`
+	Value     []byte      `json:"value,omitempty"`
+	RequestID uint64      `json:"request_id,omitempty"` // Unique ID for tracking pending operations
 }
 
 // Encode serializes the command to JSON

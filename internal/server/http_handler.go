@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/yash1thredddy/Distributed-Consensus-KV-Store/internal/raft"
 )
 
@@ -34,6 +35,7 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/kv/", h.handleKV)
 	mux.HandleFunc("/cluster/info", h.handleClusterInfo)
 	mux.HandleFunc("/health", h.handleHealth)
+	mux.Handle("/metrics", promhttp.Handler())
 }
 
 // Response types
@@ -209,13 +211,16 @@ func (h *HTTPHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (h *HTTPHandler) handleError(w http.ResponseWriter, err error) {
 	var notLeaderErr *ErrNotLeaderWithHint
 	if errors.As(err, &notLeaderErr) {
-		// Return redirect to leader if known
+		// Set leader hint headers for client to follow
 		if notLeaderErr.LeaderAddr != "" {
-			// Set redirect header
 			w.Header().Set("X-Raft-Leader-ID", notLeaderErr.LeaderID)
 			w.Header().Set("X-Raft-Leader-Addr", notLeaderErr.LeaderAddr)
 		}
-		h.writeError(w, http.StatusTemporaryRedirect, notLeaderErr.Error(), notLeaderErr.LeaderID)
+		// Use 503 Service Unavailable instead of 307 Temporary Redirect.
+		// 307 requires a Location header which would need a full URL.
+		// 503 is more appropriate for "this node can't serve, try leader" semantics.
+		// Clients can use the X-Raft-Leader-Addr header to find the leader.
+		h.writeError(w, http.StatusServiceUnavailable, notLeaderErr.Error(), notLeaderErr.LeaderID)
 		return
 	}
 

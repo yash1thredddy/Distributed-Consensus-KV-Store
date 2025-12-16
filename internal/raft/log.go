@@ -235,6 +235,27 @@ func (l *Log) TruncateAfter(index int64) error {
 	return nil
 }
 
+// TruncateBefore removes all entries before the given index (for snapshots).
+// After truncation, entries before index are no longer accessible.
+func (l *Log) TruncateBefore(index int64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Truncate in storage
+	if err := l.storage.TruncateLogBefore(index); err != nil {
+		return err
+	}
+
+	// Clear cache entries before index
+	for idx := range l.cache {
+		if idx < index {
+			delete(l.cache, idx)
+		}
+	}
+
+	return nil
+}
+
 // HasEntry returns true if an entry exists at the given index with the given term.
 func (l *Log) HasEntry(index, term int64) bool {
 	l.mu.RLock()

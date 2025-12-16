@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -274,6 +275,7 @@ func TestKVServer_ConcurrentOperations(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// Concurrent puts
+	var errCount int32
 	for i := 0; i < numOps; i++ {
 		wg.Add(1)
 		go func(i int) {
@@ -281,7 +283,8 @@ func TestKVServer_ConcurrentOperations(t *testing.T) {
 			key := fmt.Sprintf("key%d", i)
 			value := []byte(fmt.Sprintf("value%d", i))
 			if err := leader.Put(ctx, key, value); err != nil {
-				t.Logf("Put failed for key %s: %v", key, err)
+				t.Errorf("Put failed for key %s: %v", key, err)
+				atomic.AddInt32(&errCount, 1)
 			}
 		}(i)
 	}

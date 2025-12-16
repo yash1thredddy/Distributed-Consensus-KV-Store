@@ -1,0 +1,13 @@
+node_id: node5
+data_dir: /data
+raft_addr: :5001
+http_addr: :8080
+peers:
+  - node1:5001
+  - node2:5001
+  - node3:5001
+  - node4:5001
+election_timeout_min: 150ms
+election_timeout_max: 300ms
+heartbeat_interval: 50ms
+snapshot_threshold: 10000

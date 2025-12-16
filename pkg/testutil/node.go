@@ -10,12 +10,13 @@ import (
 
 // TestNode wraps a RaftNode with its infrastructure for testing.
 type TestNode struct {
-	ID        string
-	Node      *raft.RaftNode
-	Storage   storage.Storage
-	Transport *transport.GRPCTransport
-	Addr      string
-	ApplyCh   chan raft.ApplyMsg
+	ID           string
+	Node         *raft.RaftNode
+	Storage      storage.Storage
+	Transport    *transport.GRPCTransport
+	Addr         string
+	ApplyCh      chan raft.ApplyMsg
+	storageOwned bool // true if we created the storage and should close it
 }
 
 // TestNodeConfig holds configuration for creating a test node.
@@ -97,12 +98,13 @@ func NewTestNode(cfg TestNodeConfig) (*TestNode, error) {
 	}
 
 	return &TestNode{
-		ID:        cfg.ID,
-		Node:      node,
-		Storage:   store,
-		Transport: trans,
-		Addr:      cfg.Addr,
-		ApplyCh:   applyCh,
+		ID:           cfg.ID,
+		Node:         node,
+		Storage:      store,
+		Transport:    trans,
+		Addr:         cfg.Addr,
+		ApplyCh:      applyCh,
+		storageOwned: storageOwned,
 	}, nil
 }
 
@@ -126,9 +128,12 @@ func (n *TestNode) Stop() {
 }
 
 // Close stops and cleans up all resources.
+// Only closes storage if it was created by this TestNode.
 func (n *TestNode) Close() {
 	n.Stop()
-	n.Storage.Close()
+	if n.storageOwned {
+		n.Storage.Close()
+	}
 }
 
 // IsLeader returns true if this node is the leader.

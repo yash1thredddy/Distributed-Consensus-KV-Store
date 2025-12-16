@@ -123,10 +123,8 @@ func (h *WebSocketHandler) Start() {
 
 // Stop stops the WebSocket handler.
 func (h *WebSocketHandler) Stop() {
-	close(h.stopCh)
-	h.wg.Wait()
-
-	// Close all client connections
+	// Close all client connections BEFORE waiting on goroutines.
+	// This allows client handler goroutines to observe closed connections and exit.
 	h.mu.Lock()
 	for conn, cc := range h.clients {
 		cc.closeOnce.Do(func() {
@@ -135,6 +133,10 @@ func (h *WebSocketHandler) Stop() {
 	}
 	h.clients = make(map[*websocket.Conn]*clientConn)
 	h.mu.Unlock()
+
+	// Signal stop and wait for all goroutines (broadcast loop + client handlers)
+	close(h.stopCh)
+	h.wg.Wait()
 }
 
 // HandleWebSocket handles WebSocket upgrade and connection.
@@ -156,11 +158,14 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	h.sendToClient(conn, state)
 
 	// Handle incoming messages (for now, just handle disconnection)
+	// Track client goroutine with WaitGroup for clean shutdown
+	h.wg.Add(1)
 	go h.handleClient(conn, cc)
 }
 
 // handleClient handles messages from a WebSocket client.
 func (h *WebSocketHandler) handleClient(conn *websocket.Conn, cc *clientConn) {
+	defer h.wg.Done()
 	defer h.removeClient(conn, cc)
 
 	for {

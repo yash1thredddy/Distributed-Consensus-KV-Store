@@ -1,0 +1,168 @@
+version: '3.8'
+
+services:
+  # Raft Cluster Nodes
+  node1:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: raft-node1
+    hostname: node1
+    command: ["--config", "/etc/distributed-kv/configs/node1.yaml"]
+    ports:
+      - "8081:8080"
+      - "5001:5001"
+    volumes:
+      - node1-data:/data
+    networks:
+      - raft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node2:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: raft-node2
+    hostname: node2
+    command: ["--config", "/etc/distributed-kv/configs/node2.yaml"]
+    ports:
+      - "8082:8080"
+      - "5002:5001"
+    volumes:
+      - node2-data:/data
+    networks:
+      - raft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node3:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: raft-node3
+    hostname: node3
+    command: ["--config", "/etc/distributed-kv/configs/node3.yaml"]
+    ports:
+      - "8083:8080"
+      - "5003:5001"
+    volumes:
+      - node3-data:/data
+    networks:
+      - raft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node4:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: raft-node4
+    hostname: node4
+    command: ["--config", "/etc/distributed-kv/configs/node4.yaml"]
+    ports:
+      - "8084:8080"
+      - "5004:5001"
+    volumes:
+      - node4-data:/data
+    networks:
+      - raft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  node5:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    container_name: raft-node5
+    hostname: node5
+    command: ["--config", "/etc/distributed-kv/configs/node5.yaml"]
+    ports:
+      - "8085:8080"
+      - "5005:5001"
+    volumes:
+      - node5-data:/data
+    networks:
+      - raft-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: raft-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - raft-network
+    restart: unless-stopped
+    depends_on:
+      - node1
+      - node2
+      - node3
+      - node4
+      - node5
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: raft-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboard.json:/var/lib/grafana/dashboards/raft-cluster.json:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - raft-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+networks:
+  raft-network:
+    driver: bridge
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:
+  node5-data:
+  prometheus-data:
+  grafana-data:
